@@ -8,7 +8,7 @@ RPC Style HTTP API 以"操作"为建模单位, 每个端点对应一个独立的
 
 ## HTTP Method
 
-HTTP Method 总是使用 `POST`。
+HTTP Method 总是使用 `POST`；健康检查等运维端点可例外支持 `GET`。
 
 操作语义已在 URL 路径中显式表达, 无需依赖 HTTP 动词区分 CRUD; 请求参数统一通过请求体传递, 便于网关、拦截器统一处理与扩展。
 
@@ -29,7 +29,9 @@ HTTP Method 总是使用 `POST`。
 - 由模块、分组和操作组成; 操作名使用动词, 如 `create`/`get`/`update`/`delete`/`list` 等。
 - 资源名使用单数形式。
 - 参数统一通过请求体传递, 路径中不使用路径参数。
-- 总是以 `/api` 为前缀 (可选)。
+- 总是以 `/api` 为前缀。
+
+> 运维端点（如 `/api/health`）和特殊端点（如 `/api/me`）可省略 action 段，作为格式特例。
 
 格式:
 
@@ -45,6 +47,10 @@ HTTP Method 总是使用 `POST`。
 ## Content-Type
 
 请求与响应的 `Content-Type` 总是使用 `application/json`。
+
+## 时间格式
+
+请求与响应中的时间字段统一使用 RFC 3339 格式（如 `2024-01-01T00:00:00Z`），UTC 时区。
 
 ## 响应消息
 
@@ -79,13 +85,13 @@ HTTP Method 总是使用 `POST`。
 
 分页响应的 `data` 结构如下:
 
-| 字段        | 类型   | 说明                  |
-| ----------- | ------ | --------------------- |
-| `items`     | array  | 当前页数据列表。      |
-| `page`      | number | 当前页码, 从 1 开始。 |
-| `size`      | number | 每页大小。            |
-| `total`     | number | 数据总条数。          |
-| `pageCount` | number | 总页数。              |
+| 字段         | 类型   | 说明                  |
+| ------------ | ------ | --------------------- |
+| `items`      | array  | 当前页数据列表。      |
+| `page`       | number | 当前页码, 从 1 开始。 |
+| `size`       | number | 每页大小。            |
+| `total`      | number | 数据总条数。          |
+| `page_count` | number | 总页数。              |
 
 ```jsonc
 {
@@ -96,7 +102,7 @@ HTTP Method 总是使用 `POST`。
         "page": 1,
         "size": 10,
         "total": 100,
-        "pageCount": 10
+        "page_count": 10
     }
 }
 ```

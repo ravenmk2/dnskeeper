@@ -6,6 +6,14 @@ Dnskeeper 是一个 CoreDNS + Etcd 插件的管理工具
 
 ```txt
 docs/
+├── api/
+│   ├── overview.md            # API 概览
+│   ├── auth.md                # 认证模块
+│   ├── domain.md              # Domain 管理
+│   ├── health.md              # 健康检查
+│   ├── me.md                  # 当前用户
+│   ├── user.md                # 用户管理
+│   └── zone.md                # Zone 管理
 ├── conventions/
 │   └── api-design.md          # RPC 风格 API 设计规范
 ├── design/
