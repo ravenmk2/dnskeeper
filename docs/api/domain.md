@@ -4,7 +4,11 @@ date: 2026-07-12
 
 # Domain 管理模块
 
-Domain 代表完整域名（子域名），如 Zone `example.com` 下的 `www` 或 `@`（根）。本模块接口需通过 JWT 认证。
+> 本模块写操作（create/update/delete）需 `admin` 权限；只读操作（list/get）仅需通过认证。
+
+Domain 代表完整域名的第一部分，如 Zone `example.com` 下的 `www`、`api`，或 `www.beta`（多级，带 `.`）。完整域名为 `{domain}.{zone}`，如 `www.example.com`、`www.beta.example.com`；`domain` 为 `@` 时表示 Zone 根记录，完整域名等于 `zone`。
+
+Domain 是其下 Record 的分组容器，本身不持有 DNS 数据（DNS 数据在 Record 中）。Domain 实体维护 `record_count` 统计与 `last_record_id` 序号计数器（后者为内部字段，不在 API 响应中暴露，详见 [数据存储设计](../design/data-storage.md)）。
 
 ## 列出 Domain
 
@@ -33,18 +37,18 @@ POST /api/dns/domain/list
     "success": true,
     "data": [
         {
+            "zone": "example.com",
             "domain": "www",
             "name": "www.example.com",
-            "ips": ["192.168.1.1", "192.168.1.2"],
-            "ttl": 300,
+            "record_count": 2,
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:00:00Z"
         },
         {
+            "zone": "example.com",
             "domain": "@",
             "name": "example.com",
-            "ips": ["192.168.1.10"],
-            "ttl": 600,
+            "record_count": 1,
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:00:00Z"
         }
@@ -55,11 +59,11 @@ POST /api/dns/domain/list
 
 **错误场景**
 
-| 错误码             | HTTP | 说明                |
-| ------------------ | ---- | ------------------- |
-| `ZONE_NOT_FOUND`   | 200  | Zone 不存在         |
+| 错误码           | HTTP | 说明                |
+| ---------------- | ---- | ------------------- |
+| `ZONE_NOT_FOUND` | 200  | Zone 不存在         |
 | `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
-| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |
+| `UNAUTHORIZED`   | 401  | 未认证或 Token 无效 |
 
 ---
 
@@ -83,7 +87,7 @@ POST /api/dns/domain/get
 **字段约束**
 
 - `zone`: 有效域名（FQDN），1-253 字符，必填
-- `domain`: 不带 `.` 的子域名标签（1-63 字符，字母、数字、连字符，首尾为字母或数字），如 `www`；或 `@`（特例，表示 Zone 根记录），必填
+- `domain`: `@` 或一个及多个以 `.` 连接的 DNS 标签（每标签 1-63 字符，字母、数字、连字符，首尾为字母或数字），如 `www`、`www.beta`；`@` 表示 Zone 根，必填
 
 **响应**
 
@@ -91,10 +95,10 @@ POST /api/dns/domain/get
 {
     "success": true,
     "data": {
+        "zone": "example.com",
         "domain": "www",
         "name": "www.example.com",
-        "ips": ["192.168.1.1", "192.168.1.2"],
-        "ttl": 300,
+        "record_count": 2,
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:00:00Z"
     },
@@ -115,7 +119,7 @@ POST /api/dns/domain/get
 
 ## 创建 Domain
 
-创建 Domain。
+创建 Domain。Domain 为空容器（`record_count` 初始为 0），创建后可在其下创建 Record。创建 Domain 不产生 CoreDNS 同步（CoreDNS 记录由 Record 驱动）。
 
 **请求**
 
@@ -126,18 +130,14 @@ POST /api/dns/domain/create
 ```jsonc
 {
     "zone": "example.com",
-    "domain": "www",
-    "ips": ["192.168.1.1", "192.168.1.2"],
-    "ttl": 300
+    "domain": "www"
 }
 ```
 
 **字段约束**
 
 - `zone`: 有效域名（FQDN），1-253 字符，必填（需已存在）
-- `domain`: 不带 `.` 的子域名标签（1-63 字符，字母、数字、连字符，首尾为字母或数字），如 `www`；或 `@`（特例，表示 Zone 根记录），必填
-- `ips`: IP 地址数组（IPv4 与 IPv6），必填，允许为空数组，每个 IP 必须是有效格式；重复 IP 自动去重
-- `ttl`: TTL（秒），必填，最小值 1，最大值 86400
+- `domain`: `@` 或多级 DNS 标签（见上文约束），必填
 
 **响应**
 
@@ -145,10 +145,10 @@ POST /api/dns/domain/create
 {
     "success": true,
     "data": {
+        "zone": "example.com",
         "domain": "www",
         "name": "www.example.com",
-        "ips": ["192.168.1.1", "192.168.1.2"],
-        "ttl": 300,
+        "record_count": 0,
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:00:00Z"
     },
@@ -158,18 +158,21 @@ POST /api/dns/domain/create
 
 **错误场景**
 
-| 错误码             | HTTP | 说明                       |
-| ------------------ | ---- | -------------------------- |
-| `ZONE_NOT_FOUND`   | 200  | Zone 不存在，需先创建 Zone |
-| `DOMAIN_EXISTS`    | 200  | Domain 已存在              |
-| `VALIDATION_ERROR` | 200  | 请求参数不符合约束         |
-| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效        |
+| 错误码             | HTTP | 说明                |
+| ------------------ | ---- | ------------------- |
+| `ZONE_NOT_FOUND`   | 200  | Zone 不存在         |
+| `DOMAIN_EXISTS`    | 200  | Domain 已存在       |
+| `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
+| `FORBIDDEN`        | 403  | 非 Admin 用户       |
+| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |
 
 ---
 
 ## 更新 Domain
 
 更新 Domain。
+
+> 当前 Domain 实体只包含名称与统计字段，此接口主要用于刷新 `updated_at` 时间戳。未来可能增加更多可更新字段。
 
 **请求**
 
@@ -180,20 +183,14 @@ POST /api/dns/domain/update
 ```jsonc
 {
     "zone": "example.com",
-    "domain": "www",
-    "ips": ["192.168.1.3", "192.168.1.4"],
-    "ttl": 600
+    "domain": "www"
 }
 ```
 
 **字段约束**
 
 - `zone`: 有效域名（FQDN），1-253 字符，必填
-- `domain`: 不带 `.` 的子域名标签（1-63 字符，字母、数字、连字符，首尾为字母或数字），如 `www`；或 `@`（特例，表示 Zone 根记录），必填
-- `ips`: IP 地址数组（IPv4 与 IPv6），必填，允许为空数组，**替换**现有所有 IP；为空数组时删除该 Domain 的所有 CoreDNS 记录；重复 IP 自动去重
-- `ttl`: 可选，不填则保持原值，最小值 1，最大值 86400
-
-> 系统自动比较新旧 IP 列表，新增/删除差异 IP，保持 CoreDNS 记录与请求一致。
+- `domain`: `@` 或多级 DNS 标签（见上文约束），必填
 
 **响应**
 
@@ -201,10 +198,10 @@ POST /api/dns/domain/update
 {
     "success": true,
     "data": {
+        "zone": "example.com",
         "domain": "www",
         "name": "www.example.com",
-        "ips": ["192.168.1.3", "192.168.1.4"],
-        "ttl": 600,
+        "record_count": 2,
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-02T00:00:00Z"
     },
@@ -219,6 +216,7 @@ POST /api/dns/domain/update
 | `ZONE_NOT_FOUND`   | 200  | Zone 不存在         |
 | `DOMAIN_NOT_FOUND` | 200  | Domain 不存在       |
 | `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
+| `FORBIDDEN`        | 403  | 非 Admin 用户       |
 | `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |
 
 ---
@@ -227,7 +225,7 @@ POST /api/dns/domain/update
 
 删除 Domain。
 
-> 删除 Domain 会**级联删除**该 Domain 的所有 CoreDNS 记录。
+> 删除 Domain 会**级联删除**该 Domain 下所有 Record，并清除对应的 CoreDNS 记录。
 
 **请求**
 
@@ -245,7 +243,7 @@ POST /api/dns/domain/delete
 **字段约束**
 
 - `zone`: 有效域名（FQDN），1-253 字符，必填
-- `domain`: 不带 `.` 的子域名标签（1-63 字符，字母、数字、连字符，首尾为字母或数字），如 `www`；或 `@`（特例，表示 Zone 根记录），必填
+- `domain`: `@` 或多级 DNS 标签（见上文约束），必填
 
 **响应**
 
@@ -264,4 +262,5 @@ POST /api/dns/domain/delete
 | `ZONE_NOT_FOUND`   | 200  | Zone 不存在         |
 | `DOMAIN_NOT_FOUND` | 200  | Domain 不存在       |
 | `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
+| `FORBIDDEN`        | 403  | 非 Admin 用户       |
 | `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |

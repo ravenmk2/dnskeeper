@@ -12,6 +12,7 @@ docs/
 │   ├── domain.md              # Domain 管理
 │   ├── health.md              # 健康检查
 │   ├── me.md                  # 当前用户
+│   ├── record.md              # Record 管理
 │   ├── user.md                # 用户管理
 │   └── zone.md                # Zone 管理
 ├── conventions/

@@ -30,10 +30,10 @@ Token 过期后需调用刷新接口续期。
 
 | 类型     | 说明                             |
 | -------- | -------------------------------- |
-| `normal` | 普通用户，可管理 Domain          |
-| `admin`  | 管理员，可管理用户、Zone、Domain |
+| `normal` | 普通用户，可管理 Record          |
+| `admin`  | 管理员，可管理用户、Zone、Domain、Record |
 
-用户管理接口需 `admin` 权限；Zone 管理的只读操作（list/get）仅需通过认证，写操作（create/update/delete）需 `admin` 权限；Domain 管理与当前用户接口仅需通过认证。
+用户管理接口需 `admin` 权限；Zone 与 Domain 管理的只读操作（list/get）仅需通过认证，其写操作（create/update/delete）需 `admin` 权限；Record 管理与当前用户接口仅需通过认证。
 
 ## 4. 响应格式
 
@@ -91,31 +91,40 @@ Token 过期后需调用刷新接口续期。
 | `ZONE_EXISTS`           | 200  | Zone 已存在                                   |
 | `DOMAIN_NOT_FOUND`      | 200  | Domain 不存在                                 |
 | `DOMAIN_EXISTS`         | 200  | Domain 已存在                                 |
+| `RECORD_NOT_FOUND`      | 200  | Record 不存在                                 |
+| `RECORD_EXISTS`         | 200  | Record 已存在（同 Domain 下重复记录）         |
+| `RECORD_TYPE_INVALID`   | 200  | Record 类型字段非法（非 A/AAAA/SRV/TXT）      |
+| `RECORD_ID_EXHAUSTED`   | 200  | Domain 下 record-id 序号达 9999 上限          |
 | `SERVICE_UNAVAILABLE`   | 503  | etcd 服务不可用                               |
 | `INTERNAL_ERROR`        | 500  | 服务器内部错误                                |
 
-> `VALIDATION_ERROR` 可选携带 `error.details` 字段级错误列表（见 [API 设计规范](../conventions/api-design.md)）；简单校验场景可省略 `details`，仅返回 `code` 与 `message`。
+> `VALIDATION_ERROR` 可选携带 `error.details` 字段级错误列表（见 [API 设计规范](../conventions/api-design.md)）；简单校验场景可省略 `details`，仅返回 `code` 与 `message`。记录值与类型不匹配（如 `type=A` 但 `value` 为 IPv6）按 `VALIDATION_ERROR` 处理。
 
 ## 6. 接口清单
 
-| 模块        | Method   | Path                      | 鉴权 | 说明                    |
-| ----------- | -------- | ------------------------- | ---- | ----------------------- |
-| 健康检查    | GET/POST | `/api/health`             | 公开 | 反映 etcd 连接状态      |
-| 认证        | POST     | `/api/auth/login`         | 公开 | 用户登录                |
-| 认证        | POST     | `/api/auth/refresh`       | 公开 | 刷新 Token              |
-| 当前用户    | POST     | `/api/me`                 | 登录 | 获取当前用户信息        |
-| 当前用户    | POST     | `/api/me/change-password` | 登录 | 修改当前用户密码        |
-| 用户管理    | POST     | `/api/user/list`          | 管理 | 列出所有用户            |
-| 用户管理    | POST     | `/api/user/create`        | 管理 | 创建用户                |
-| 用户管理    | POST     | `/api/user/update`        | 管理 | 更新用户                |
-| 用户管理    | POST     | `/api/user/delete`        | 管理 | 删除用户                |
-| Zone 管理   | POST     | `/api/dns/zone/list`      | 登录 | 列出所有 Zone           |
-| Zone 管理   | POST     | `/api/dns/zone/get`       | 登录 | 获取 Zone 详情          |
-| Zone 管理   | POST     | `/api/dns/zone/create`    | 管理 | 创建 Zone               |
-| Zone 管理   | POST     | `/api/dns/zone/update`    | 管理 | 更新 Zone               |
-| Zone 管理   | POST     | `/api/dns/zone/delete`    | 管理 | 删除 Zone（级联）       |
-| Domain 管理 | POST     | `/api/dns/domain/list`    | 登录 | 列出 Zone 下所有 Domain |
-| Domain 管理 | POST     | `/api/dns/domain/get`     | 登录 | 获取 Domain 详情        |
-| Domain 管理 | POST     | `/api/dns/domain/create`  | 登录 | 创建 Domain             |
-| Domain 管理 | POST     | `/api/dns/domain/update`  | 登录 | 更新 Domain             |
-| Domain 管理 | POST     | `/api/dns/domain/delete`  | 登录 | 删除 Domain             |
+| 模块        | Method   | Path                      | 鉴权 | 说明                       |
+| ----------- | -------- | ------------------------- | ---- | -------------------------- |
+| 健康检查    | GET/POST | `/api/health`             | 公开 | 反映 etcd 连接状态         |
+| 认证        | POST     | `/api/auth/login`         | 公开 | 用户登录                   |
+| 认证        | POST     | `/api/auth/refresh`       | 公开 | 刷新 Token                 |
+| 当前用户    | POST     | `/api/me`                 | 登录 | 获取当前用户信息           |
+| 当前用户    | POST     | `/api/me/change-password` | 登录 | 修改当前用户密码           |
+| 用户管理    | POST     | `/api/user/list`          | 管理 | 列出所有用户               |
+| 用户管理    | POST     | `/api/user/create`        | 管理 | 创建用户                   |
+| 用户管理    | POST     | `/api/user/update`        | 管理 | 更新用户                   |
+| 用户管理    | POST     | `/api/user/delete`        | 管理 | 删除用户                   |
+| Zone 管理   | POST     | `/api/dns/zone/list`      | 登录 | 列出所有 Zone              |
+| Zone 管理   | POST     | `/api/dns/zone/get`       | 登录 | 获取 Zone 详情             |
+| Zone 管理   | POST     | `/api/dns/zone/create`    | 管理 | 创建 Zone                  |
+| Zone 管理   | POST     | `/api/dns/zone/update`    | 管理 | 更新 Zone                  |
+| Zone 管理   | POST     | `/api/dns/zone/delete`    | 管理 | 删除 Zone（级联）          |
+| Domain 管理 | POST     | `/api/dns/domain/list`    | 登录 | 列出 Zone 下所有 Domain    |
+| Domain 管理 | POST     | `/api/dns/domain/get`     | 登录 | 获取 Domain 详情           |
+| Domain 管理 | POST     | `/api/dns/domain/create`  | 管理 | 创建 Domain                |
+| Domain 管理 | POST     | `/api/dns/domain/update`  | 管理 | 更新 Domain                |
+| Domain 管理 | POST     | `/api/dns/domain/delete`  | 管理 | 删除 Domain（级联）        |
+| Record 管理 | POST     | `/api/dns/record/list`    | 登录 | 列出 Domain 下所有 Record  |
+| Record 管理 | POST     | `/api/dns/record/get`     | 登录 | 获取 Record 详情           |
+| Record 管理 | POST     | `/api/dns/record/create`  | 登录 | 创建 Record               |
+| Record 管理 | POST     | `/api/dns/record/update`  | 登录 | 更新 Record               |
+| Record 管理 | POST     | `/api/dns/record/delete`  | 登录 | 删除 Record               |
