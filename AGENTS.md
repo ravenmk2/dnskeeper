@@ -17,7 +17,8 @@ docs/
 ├── conventions/
 │   └── api-design.md          # RPC 风格 API 设计规范
 ├── design/
-│   └── data-storage.md        # 数据存储设计
+│   ├── data-storage.md        # 数据存储设计
+│   └── dns-sync.md            # DNS 数据同步设计
 └── references/
     └── coredns-etcd.md        # CoreDNS etcd 插件参考
 ```
