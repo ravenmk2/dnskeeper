@@ -22,7 +22,7 @@ POST /api/me
 {
     "success": true,
     "data": {
-        "id": 1701320967,
+        "id": "admin",
         "username": "admin",
         "user_type": "admin",
         "builtin": true,
@@ -61,8 +61,8 @@ POST /api/me/change-password
 
 **字段约束**
 
-- `old_password`: 6-72 字符，必填
-- `new_password`: 6-72 字符，必填
+- `old_password`: 6-24 字符，必填
+- `new_password`: 6-24 字符，至少含大写/小写/数字/特殊字符中的 2 类，必填
 
 **响应**
 
@@ -80,10 +80,11 @@ POST /api/me/change-password
 | ------------------ | ---- | ------------------------ |
 | `WRONG_PASSWORD`   | 200  | 旧密码错误               |
 | `SAME_PASSWORD`    | 200  | 新密码与旧密码相同       |
+| `WEAK_PASSWORD`    | 200  | 新密码不符合强度规则     |
 | `VALIDATION_ERROR` | 200  | 请求参数缺失或不符合约束 |
 | `USER_NOT_FOUND`   | 200  | 用户不存在               |
 | `UNAUTHORIZED`     | 401  | 未认证或 Token 无效      |
 
 > `WRONG_PASSWORD`、`SAME_PASSWORD` 返回 `200`：已认证场景下的密码规则校验属业务错误而非安全层错误。
-
+> `new_password` 须满足强度规则（6-24 字符、至少 2/4 字符类），不符合返回 `WEAK_PASSWORD`。
 > 修改密码不会使已签发的 token 失效；access token 与 refresh token 继续有效直至自然过期。

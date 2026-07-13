@@ -6,6 +6,8 @@ date: 2026-07-12
 
 > 本模块所有接口需 `admin` 权限。
 
+`username` 须由字母、数字、下划线、连字符组成（`[a-zA-Z0-9_-]`），3-32 字符，字母开头、字母/数字结尾，下划线与连字符不可连续；`username` 大小写不敏感，`user-id` 为其小写派生（`lowercase(username)`），作 API 定位符与 etcd key。
+
 ## 列出所有用户
 
 列出所有用户。
@@ -25,7 +27,7 @@ POST /api/user/list
     "success": true,
     "data": [
         {
-            "id": 1701320967,
+            "id": "admin",
             "username": "admin",
             "user_type": "admin",
             "builtin": true,
@@ -33,7 +35,7 @@ POST /api/user/list
             "updated_at": "2024-01-01T00:00:00Z"
         },
         {
-            "id": 1701320968,
+            "id": "user1",
             "username": "user1",
             "user_type": "normal",
             "builtin": false,
@@ -74,9 +76,11 @@ POST /api/user/create
 
 **字段约束**
 
-- `username`: 3-32 字符，必填
-- `password`: 6-72 字符，必填
+- `username`: 3-32 字符；字符集 `[a-zA-Z0-9_-]`；必须以字母开头、以字母或数字结尾；下划线与连字符不可连续出现；大小写不敏感（与已存在用户名冲突返回 `USER_EXISTS`）；必填
+- `password`: 6-24 字符；至少包含大写字母、小写字母、数字、特殊字符中的 2 类；必填
 - `user_type`: `admin` 或 `normal`，必填
+
+> 特殊字符指 ASCII 可见非字母数字字符（如 `!@#$%^&*()-_=+` 等）。`username` 含大写时，`id` 为其小写形式（如 `username="Alice"` → `id="alice"`）。
 
 **响应**
 
@@ -84,7 +88,7 @@ POST /api/user/create
 {
     "success": true,
     "data": {
-        "id": 1701320967,
+        "id": "newuser",
         "username": "newuser",
         "user_type": "normal",
         "builtin": false,
@@ -97,12 +101,13 @@ POST /api/user/create
 
 **错误场景**
 
-| 错误码             | HTTP | 说明                |
-| ------------------ | ---- | ------------------- |
-| `USER_EXISTS`      | 200  | 用户名已存在        |
-| `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
-| `FORBIDDEN`        | 403  | 非 Admin 用户       |
-| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |
+| 错误码             | HTTP | 说明                         |
+| ------------------ | ---- | ---------------------------- |
+| `USER_EXISTS`      | 200  | 用户名已存在（大小写不敏感） |
+| `WEAK_PASSWORD`    | 200  | 密码不符合强度规则           |
+| `VALIDATION_ERROR` | 200  | 请求参数不符合约束           |
+| `FORBIDDEN`        | 403  | 非 Admin 用户                |
+| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效          |
 
 ---
 
@@ -118,8 +123,7 @@ POST /api/user/update
 
 ```jsonc
 {
-    "id": 1701320967,
-    "username": "updateduser",
+    "id": "newuser",
     "password": "newpassword123",
     "user_type": "normal"
 }
@@ -127,12 +131,12 @@ POST /api/user/update
 
 **字段约束**
 
-- `id`: 必填
-- `username`: 3-32 字符，可选
-- `password`: 6-72 字符，可选
+- `id`: string，必填（`lowercase(username)`）
+- `password`: 6-24 字符，至少含大写/小写/数字/特殊字符中的 2 类，可选
 - `user_type`: `admin` 或 `normal`，可选
 
-> `username`、`password`、`user_type` 至少提供一项，否则返回 `VALIDATION_ERROR`。
+> `password`、`user_type` 至少提供一项，否则返回 `VALIDATION_ERROR`。
+> `username` 不可更新（`id` 派生自 `username`，变更会导致 `id` 漂移）；如需变更用户名，须删除后重建。
 
 **响应**
 
@@ -140,8 +144,8 @@ POST /api/user/update
 {
     "success": true,
     "data": {
-        "id": 1701320967,
-        "username": "updateduser",
+        "id": "newuser",
+        "username": "newuser",
         "user_type": "normal",
         "builtin": false,
         "created_at": "2024-01-01T00:00:00Z",
@@ -153,14 +157,14 @@ POST /api/user/update
 
 **错误场景**
 
-| 错误码                  | HTTP | 说明                   |
-| ----------------------- | ---- | ---------------------- |
-| `USER_NOT_FOUND`        | 200  | 用户不存在             |
-| `USER_EXISTS`           | 200  | 更新后的用户名已被占用 |
-| `CANNOT_DEMOTE_BUILTIN` | 200  | 不能降级内置用户       |
-| `VALIDATION_ERROR`      | 200  | 请求参数不符合约束     |
-| `FORBIDDEN`             | 403  | 非 Admin 用户          |
-| `UNAUTHORIZED`          | 401  | 未认证或 Token 无效    |
+| 错误码                  | HTTP | 说明                |
+| ----------------------- | ---- | ------------------- |
+| `USER_NOT_FOUND`        | 200  | 用户不存在          |
+| `CANNOT_DEMOTE_BUILTIN` | 200  | 不能降级内置用户    |
+| `WEAK_PASSWORD`         | 200  | 密码不符合强度规则  |
+| `VALIDATION_ERROR`      | 200  | 请求参数不符合约束  |
+| `FORBIDDEN`             | 403  | 非 Admin 用户       |
+| `UNAUTHORIZED`          | 401  | 未认证或 Token 无效 |
 
 ---
 
@@ -176,13 +180,13 @@ POST /api/user/delete
 
 ```jsonc
 {
-    "id": 1701320967
+    "id": "newuser"
 }
 ```
 
 **字段约束**
 
-- `id`: 必填
+- `id`: string，必填（`lowercase(username)`）
 
 **响应**
 

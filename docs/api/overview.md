@@ -80,6 +80,7 @@ Token 过期后需调用刷新接口续期。
 | `INVALID_CREDENTIALS`   | 401  | 用户名或密码错误                              |
 | `WRONG_PASSWORD`        | 200  | 旧密码错误                                    |
 | `SAME_PASSWORD`         | 200  | 新密码与旧密码相同                            |
+| `WEAK_PASSWORD`         | 200  | 密码不符合强度规则（长度或字符类不足）        |
 | `UNAUTHORIZED`          | 401  | 受保护端点：未携带 access token 或其无效/过期 |
 | `INVALID_TOKEN`         | 401  | 刷新端点：refresh token 无效/过期             |
 | `FORBIDDEN`             | 403  | 权限不足                                      |
