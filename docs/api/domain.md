@@ -59,11 +59,11 @@ POST /api/dns/domain/list
 
 **错误场景**
 
-| 错误码           | HTTP | 说明                |
-| ---------------- | ---- | ------------------- |
-| `ZONE_NOT_FOUND` | 200  | Zone 不存在         |
+| 错误码             | HTTP | 说明                |
+| ------------------ | ---- | ------------------- |
+| `ZONE_NOT_FOUND`   | 200  | Zone 不存在         |
 | `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
-| `UNAUTHORIZED`   | 401  | 未认证或 Token 无效 |
+| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |
 
 ---
 
@@ -139,6 +139,8 @@ POST /api/dns/domain/create
 - `zone`: 有效域名（FQDN），1-253 字符，必填（需已存在）
 - `domain`: `@` 或多级 DNS 标签（见上文约束），必填
 
+> Domain 不得与既有 Zone 嵌套冲突：将 `{domain}.{zone}` 及逐级删除 `domain` 最左标签（保留 ≥1 级）所得祖先名逐一与既有 Zone 列表比对，任一命中返回 `DOMAIN_ZONE_CONFLICT`；`@`（Zone 根）全名等于当前 Zone，跳过校验。例：`domain=www.beta`、`zone=example.com`，既有 Zone 含 `beta.example.com` 时，删 `www` 得 `beta.example.com` 命中 → 拒绝。
+
 **响应**
 
 ```jsonc
@@ -158,13 +160,14 @@ POST /api/dns/domain/create
 
 **错误场景**
 
-| 错误码             | HTTP | 说明                |
-| ------------------ | ---- | ------------------- |
-| `ZONE_NOT_FOUND`   | 200  | Zone 不存在         |
-| `DOMAIN_EXISTS`    | 200  | Domain 已存在       |
-| `VALIDATION_ERROR` | 200  | 请求参数不符合约束  |
-| `FORBIDDEN`        | 403  | 非 Admin 用户       |
-| `UNAUTHORIZED`     | 401  | 未认证或 Token 无效 |
+| 错误码                 | HTTP | 说明                                           |
+| ---------------------- | ---- | ---------------------------------------------- |
+| `ZONE_NOT_FOUND`       | 200  | Zone 不存在                                    |
+| `DOMAIN_EXISTS`        | 200  | Domain 已存在                                  |
+| `DOMAIN_ZONE_CONFLICT` | 200  | Domain 全名或其祖先名命中既有 Zone（嵌套冲突） |
+| `VALIDATION_ERROR`     | 200  | 请求参数不符合约束                             |
+| `FORBIDDEN`            | 403  | 非 Admin 用户                                  |
+| `UNAUTHORIZED`         | 401  | 未认证或 Token 无效                            |
 
 ---
 

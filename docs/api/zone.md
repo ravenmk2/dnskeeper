@@ -6,7 +6,7 @@ date: 2026-07-12
 
 > 本模块写操作（create/update/delete）需 `admin` 权限；只读操作（list/get）仅需通过认证。
 
-Zone 代表域名区域（FQDN），如 `example.com`，通常为二级域名，亦支持三级（如 `sub.example.com`）。Zone 仅起分组作用，便于按 zone 批量管理其下 Domain 与 Record。
+Zone 代表域名区域（FQDN），如 `example.com`，通常为二级域名，亦支持三级（如 `sub.example.com`）。Zone 仅起分组作用，便于按 zone 批量管理其下 Domain 与 Record。Zone 须为至少 2 级标签的 FQDN（如 `example.com`、`sub.example.com`），单标签（如 `com`）不允许。
 
 > 避免父子 Zone 同时存在（如 `example.com` 与 `a.example.com` 同时作为 Zone），以免查询时产生归属歧义。
 
@@ -65,7 +65,7 @@ POST /api/dns/zone/get
 
 **字段约束**
 
-- `zone`: 有效域名（FQDN），1-253 字符，必填
+- `zone`: 有效域名（FQDN），至少 2 级标签，1-253 字符，必填
 
 **响应**
 
@@ -110,7 +110,7 @@ POST /api/dns/zone/create
 
 **字段约束**
 
-- `zone`: 有效域名（FQDN），1-253 字符，必填
+- `zone`: 有效域名（FQDN），至少 2 级标签，1-253 字符，必填
 
 **响应**
 
@@ -158,7 +158,7 @@ POST /api/dns/zone/update
 
 **字段约束**
 
-- `zone`: 有效域名（FQDN），1-253 字符，必填
+- `zone`: 有效域名（FQDN），至少 2 级标签，1-253 字符，必填
 
 **响应**
 
@@ -206,7 +206,7 @@ POST /api/dns/zone/delete
 
 **字段约束**
 
-- `zone`: 有效域名（FQDN），1-253 字符，必填
+- `zone`: 有效域名（FQDN），至少 2 级标签，1-253 字符，必填
 
 **响应**
 

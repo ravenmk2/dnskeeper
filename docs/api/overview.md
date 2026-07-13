@@ -74,30 +74,31 @@ Token 过期后需调用刷新接口续期。
 
 ## 5. 错误码总表
 
-| 错误码                  | HTTP | 说明                                          |
-| ----------------------- | ---- | --------------------------------------------- |
-| `VALIDATION_ERROR`      | 200  | 请求参数校验失败                              |
-| `INVALID_CREDENTIALS`   | 401  | 用户名或密码错误                              |
-| `WRONG_PASSWORD`        | 200  | 旧密码错误                                    |
-| `SAME_PASSWORD`         | 200  | 新密码与旧密码相同                            |
-| `WEAK_PASSWORD`         | 200  | 密码不符合强度规则（长度或字符类不足）        |
-| `UNAUTHORIZED`          | 401  | 受保护端点：未携带 access token 或其无效/过期 |
-| `INVALID_TOKEN`         | 401  | 刷新端点：refresh token 无效/过期             |
-| `FORBIDDEN`             | 403  | 权限不足                                      |
-| `CANNOT_DELETE_BUILTIN` | 200  | 不能删除内置用户                              |
-| `CANNOT_DEMOTE_BUILTIN` | 200  | 不能降级内置用户                              |
-| `USER_NOT_FOUND`        | 200  | 用户不存在                                    |
-| `USER_EXISTS`           | 200  | 用户已存在                                    |
-| `ZONE_NOT_FOUND`        | 200  | Zone 不存在                                   |
-| `ZONE_EXISTS`           | 200  | Zone 已存在                                   |
-| `DOMAIN_NOT_FOUND`      | 200  | Domain 不存在                                 |
-| `DOMAIN_EXISTS`         | 200  | Domain 已存在                                 |
-| `RECORD_NOT_FOUND`      | 200  | Record 不存在                                 |
-| `RECORD_EXISTS`         | 200  | Record 已存在（同 Domain 下重复记录）         |
-| `RECORD_TYPE_INVALID`   | 200  | Record 类型字段非法（非 A/AAAA/SRV/TXT）      |
-| `RECORD_ID_EXHAUSTED`   | 200  | Domain 下 record-id 序号达 9999 上限          |
-| `SERVICE_UNAVAILABLE`   | 503  | etcd 服务不可用                               |
-| `INTERNAL_ERROR`        | 500  | 服务器内部错误                                |
+| 错误码                  | HTTP | 说明                                           |
+| ----------------------- | ---- | ---------------------------------------------- |
+| `VALIDATION_ERROR`      | 200  | 请求参数校验失败                               |
+| `INVALID_CREDENTIALS`   | 401  | 用户名或密码错误                               |
+| `WRONG_PASSWORD`        | 200  | 旧密码错误                                     |
+| `SAME_PASSWORD`         | 200  | 新密码与旧密码相同                             |
+| `WEAK_PASSWORD`         | 200  | 密码不符合强度规则（长度或字符类不足）         |
+| `UNAUTHORIZED`          | 401  | 受保护端点：未携带 access token 或其无效/过期  |
+| `INVALID_TOKEN`         | 401  | 刷新端点：refresh token 无效/过期              |
+| `FORBIDDEN`             | 403  | 权限不足                                       |
+| `CANNOT_DELETE_BUILTIN` | 200  | 不能删除内置用户                               |
+| `CANNOT_DEMOTE_BUILTIN` | 200  | 不能降级内置用户                               |
+| `USER_NOT_FOUND`        | 200  | 用户不存在                                     |
+| `USER_EXISTS`           | 200  | 用户已存在                                     |
+| `ZONE_NOT_FOUND`        | 200  | Zone 不存在                                    |
+| `ZONE_EXISTS`           | 200  | Zone 已存在                                    |
+| `DOMAIN_NOT_FOUND`      | 200  | Domain 不存在                                  |
+| `DOMAIN_EXISTS`         | 200  | Domain 已存在                                  |
+| `DOMAIN_ZONE_CONFLICT`  | 200  | Domain 全名或其祖先名命中既有 Zone（嵌套冲突） |
+| `RECORD_NOT_FOUND`      | 200  | Record 不存在                                  |
+| `RECORD_EXISTS`         | 200  | Record 已存在（同 Domain 下重复记录）          |
+| `RECORD_TYPE_INVALID`   | 200  | Record 类型字段非法（非 A/AAAA/SRV/TXT）       |
+| `RECORD_ID_EXHAUSTED`   | 200  | Domain 下 record-id 序号达 9999 上限           |
+| `SERVICE_UNAVAILABLE`   | 503  | etcd 服务不可用                                |
+| `INTERNAL_ERROR`        | 500  | 服务器内部错误                                 |
 
 > `VALIDATION_ERROR` 可选携带 `error.details` 字段级错误列表（见 [API 设计规范](../conventions/api-design.md)）；简单校验场景可省略 `details`，仅返回 `code` 与 `message`。记录值与类型不匹配（如 `type=A` 但 `value` 为 IPv6）按 `VALIDATION_ERROR` 处理。
 
