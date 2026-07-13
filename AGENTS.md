@@ -2,7 +2,7 @@
 
 Dnskeeper 是一个 CoreDNS + Etcd 插件的管理工具
 
-## Docs
+## 文档索引
 
 ```txt
 docs/
@@ -23,3 +23,9 @@ docs/
 └── references/
     └── coredns-etcd.md        # CoreDNS etcd 插件参考
 ```
+
+## 文档写作风格
+
+- 语言保持简洁、精确，逻辑清晰、一致。
+- 使用公共规范的标准术语，禁止自编自造。
+- 使用结构化的方式表达，避免冗长的段落和流水账。

@@ -10,7 +10,7 @@ date: 2026-07-12
 
 dnskeeper 与 CoreDNS 共用同一 etcd 实例：领域对象存于 `/dnskeeper/` 前缀，CoreDNS 服务记录存于 `/skydns/` 前缀（默认值，可配置，见第 5 节）。同一实例使两处写入可纳入单次 etcd 事务（`Txn`），从根本上消除双写漂移。
 
-本文定义的规则**与触发时机解耦**：以 Domain 为同步单元（其下全部 Record 构成期望记录集），可应用于任意 Domain 集合——单个 Domain、某 Zone 下全部 Domain、或全部 Domain——规则本身不变，仅遍历范围与是否执行孤儿清理不同。
+本文定义的规则**与触发时机解耦**：以 Domain 为同步单元（其下全部 Record 构成期望记录集），可应用于任意 Domain 集合——单个 Domain、某 Zone 下全部 Domain、或全部 Domain——规则本身不变，仅遍历范围与是否执行悬空清理不同。
 
 ## 2. CoreDNS etcd 记录模型
 
@@ -25,12 +25,12 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
 - `domain` 为 `@`（Zone 根）时，不追加任何段，记录直接落在 Zone 段下；
 - `record-id` 作为叶子子键追加在 domain 段之后。
 
-| Zone              | Domain     | record-id | 完整 DNS 名           | CoreDNS 记录 Key                  |
-| ----------------- | ---------- | --------- | --------------------- | --------------------------------- |
-| `example.com`     | `www`      | `0001`    | `www.example.com`     | `/skydns/com/example/www/0001`    |
-| `example.com`     | `@`        | `0001`    | `example.com`         | `/skydns/com/example/0001`        |
+| Zone              | Domain     | record-id | 完整 DNS 名            | CoreDNS 记录 Key                    |
+| ----------------- | ---------- | --------- | ---------------------- | ----------------------------------- |
+| `example.com`     | `www`      | `0001`    | `www.example.com`      | `/skydns/com/example/www/0001`      |
+| `example.com`     | `@`        | `0001`    | `example.com`          | `/skydns/com/example/0001`          |
 | `example.com`     | `www.beta` | `0001`    | `www.beta.example.com` | `/skydns/com/example/beta/www/0001` |
-| `sub.example.com` | `api`      | `0001`    | `api.sub.example.com` | `/skydns/com/example/sub/api/0001` |
+| `sub.example.com` | `api`      | `0001`    | `api.sub.example.com`  | `/skydns/com/example/sub/api/0001`  |
 
 > 完整 DNS 名的查询以前缀 `/skydns/{reversed-FQDN}/` 做范围查找，返回该前缀下全部子键（即 DNS RR），见 [coredns-etcd.md](../references/coredns-etcd.md) "Special Behavior"。
 
@@ -38,12 +38,12 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
 
 每条 CoreDNS 记录的值为一 JSON 对象（SkyDNS message），dnskeeper 按 `Record.type` 使用对应字段：
 
-| type   | message                                                              | 说明                                                                                                                       |
-| ------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `A`    | `{"host":value,"ttl":ttl}`                                           | `value` 为 IPv4 串，生成 A 记录。                                                                                          |
-| `AAAA` | `{"host":value,"ttl":ttl}`                                           | `value` 为 IPv6 串，生成 AAAA 记录；CoreDNS 按 IP 串格式判定 v4/v6，无需显式区分。                                          |
-| `SRV`  | `{"host":value,"ttl":ttl,"priority":priority,"port":port,"weight":weight}` | `value` 为目标主机 FQDN（建议带尾点）；`priority`/`port`/`weight` 取自 Record 同名字段。                                   |
-| `TXT`  | `{"text":value,"ttl":ttl}`                                           | `value` 为文本，生成 TXT 记录。                                                                                            |
+| type   | message                                                                    | 说明                                                                                     |
+| ------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `A`    | `{"host":value,"ttl":ttl}`                                                 | `value` 为 IPv4 串，生成 A 记录。                                                        |
+| `AAAA` | `{"host":value,"ttl":ttl}`                                                 | `value` 为 IPv6 串，生成 AAAA 记录；CoreDNS 按 IP 串格式判定 v4/v6，无需显式区分。       |
+| `SRV`  | `{"host":value,"ttl":ttl,"priority":priority,"port":port,"weight":weight}` | `value` 为目标主机 FQDN（建议带尾点）；`priority`/`port`/`weight` 取自 Record 同名字段。 |
+| `TXT`  | `{"text":value,"ttl":ttl}`                                                 | `value` 为文本，生成 TXT 记录。                                                          |
 
 > dnskeeper 记录为持久 key（无 lease），DNS TTL 直接取自 `ttl` 字段；CoreDNS 的 `min/max-lease-ttl` 主要约束 lease 型记录，对持久 key 影响有限。
 
@@ -53,10 +53,10 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
 
 一个 Domain 下每个 Record 在 CoreDNS 记录前缀下对应一个子键，**子键名直接取 record-id**：
 
-| Zone          | Domain | Records                                              | ttl | CoreDNS 记录                                                                                                                                                  |
-| ------------- | ------ | ---------------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `example.com` | `www`  | `A id=0001 192.168.1.1`、`A id=0002 192.168.1.2`      | 300 | `/skydns/com/example/www/0001`=`{"host":"192.168.1.1","ttl":300}`<br>`/skydns/com/example/www/0002`=`{"host":"192.168.1.2","ttl":300}`                         |
-| `example.com` | `@`    | `AAAA id=0001 2001:db8::1`                           | 600 | `/skydns/com/example/0001`=`{"host":"2001:db8::1","ttl":600}`                                                                                                  |
+| Zone          | Domain | Records                                          | ttl | CoreDNS 记录                                                                                                                           |
+| ------------- | ------ | ------------------------------------------------ | --- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `example.com` | `www`  | `A id=0001 192.168.1.1`、`A id=0002 192.168.1.2` | 300 | `/skydns/com/example/www/0001`=`{"host":"192.168.1.1","ttl":300}`<br>`/skydns/com/example/www/0002`=`{"host":"192.168.1.2","ttl":300}` |
+| `example.com` | `@`    | `AAAA id=0001 2001:db8::1`                       | 600 | `/skydns/com/example/0001`=`{"host":"2001:db8::1","ttl":600}`                                                                          |
 
 子键名 = record-id，与 dnskeeper Record 一一对应。前缀范围查询一次性返回子键名（即 record-id）与值（含类型字段），reconcile 的 diff 仅需比较子键名与一并返回的值，无需额外读取。
 
@@ -117,9 +117,9 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
 
 > 创建或更新 Zone 与 Domain 不产生 CoreDNS 同步：CoreDNS 的权威 Zone 由 Corefile 定义，etcd 仅承载记录而非 Zone/Domain 元数据；Zone 与 Domain 为 dnskeeper 自管的统计实体。
 
-### 3.6 孤儿记录清理
+### 3.6 悬空记录清理
 
-CoreDNS 记录须由 Record 对象支撑。无对应 Record 的记录为**孤儿**，应删除。
+CoreDNS 记录须由 Record 对象支撑。无对应 Record 的记录为**悬空**，应删除。
 
 集合级同步在逐个 Domain 执行 3.2 后，再做一次 Zone 级对账：
 
@@ -127,18 +127,18 @@ CoreDNS 记录须由 Record 对象支撑。无对应 Record 的记录为**孤儿
 2. 对每个子键，剥离 `/skydns/{reversed-zone}/` 前缀，按 `/` 切分得相对路径段序列：
     - 末段 = record-id；
     - 其余段为 domain 的逆序标签，将其**逆序**后以 `.` 连接得 domain（空序列 → `@`）；
-3. 据此还原 `(zone, domain, record-id)`，若 `/dnskeeper/dns/{zone}/{domain}/{record-id}` 不存在，则该子键为孤儿，删除。
+3. 据此还原 `(zone, domain, record-id)`，若 `/dnskeeper/dns/{zone}/{domain}/{record-id}` 不存在，则该子键为悬空，删除。
 
-> 多级 domain（含 `.`）在 CoreDNS 路径中被拆为多段逆序；还原时逆序再拼回，与正向映射互逆。同一 Domain 下多出的非法字段（Record 存在但 message 与期望不符）由 3.2 reconcile 覆盖，不属孤儿。record-id 不复用，故已删除的 id 永不会被重新分配给不同内容，孤儿识别无歧义。
+> 多级 domain（含 `.`）在 CoreDNS 路径中被拆为多段逆序；还原时逆序再拼回，与正向映射互逆。同一 Domain 下多出的非法字段（Record 存在但 message 与期望不符）由 3.2 reconcile 覆盖，不属悬空。record-id 不复用，故已删除的 id 永不会被重新分配给不同内容，悬空识别无歧义。
 
 ### 3.7 应用粒度
 
 上述规则以 Domain 为单元，可应用于任意 Domain 集合，规则本身不变：
 
 - **单 Domain 级**：对单个 Domain 执行 3.2（或 3.3）。
-- **集合级**：对集合内每个 Domain 逐个套用 3.2–3.3，之后执行 3.6 孤儿清理，以保证 CoreDNS 侧与期望状态全局一致。
+- **集合级**：对集合内每个 Domain 逐个套用 3.2–3.3，之后执行 3.6 悬空清理，以保证 CoreDNS 侧与期望状态全局一致。
 
-集合可为某 Zone 下全部 Domain，或全部 Domain；差异仅为遍历范围与是否执行孤儿清理。
+集合可为某 Zone 下全部 Domain，或全部 Domain；差异仅为遍历范围与是否执行悬空清理。
 
 ## 4. 原子性与一致性
 
@@ -168,9 +168,9 @@ dnskeeper 与 CoreDNS 共用同一 etcd，单次 `Txn` 可原子写 `/dnskeeper/
 ## 6. 设计取舍
 
 - **子键命名取 record-id**：与 Record 一一对应，reconcile 按子键名比 diff；接受 dotless id 的幻影子域副作用（2.3）。
-- **record-id 不复用**：Domain 内递增序号、删除不回退，id 稳定永不重复——孤儿记录识别无歧义，同步语义清晰（见 [data-storage.md](data-storage.md) §2）。
-- **同步以 reconcile 建模而非按操作建模**：规则描述"期望 → 收敛"的状态转移，与触发时机解耦，单 Domain 与集合级同一套规则，仅遍历范围与孤儿清理与否不同。
+- **record-id 不复用**：Domain 内递增序号、删除不回退，id 稳定永不重复——悬空记录识别无歧义，同步语义清晰（见 [data-storage.md](data-storage.md) §2）。
+- **同步以 reconcile 建模而非按操作建模**：规则描述"期望 → 收敛"的状态转移，与触发时机解耦，单 Domain 与集合级同一套规则，仅遍历范围与悬空清理与否不同。
 - **多类型记录共用 reconcile 框架**：A/AAAA/SRV/TXT 仅 message 构造按类型不同，diff 与收敛逻辑统一。
-- **集合级引入孤儿清理**：单 Domain 的 reconcile 只能保证被同步 Domain 自身正确，无法清除无主记录；孤儿清理以 Zone 反转前缀为单位对账，使 CoreDNS 侧全局收敛。
+- **集合级引入悬空清理**：单 Domain 的 reconcile 只能保证被同步 Domain 自身正确，无法清除无主记录；悬空清理以 Zone 反转前缀为单位对账，使 CoreDNS 侧全局收敛。
 - **原子性启用 Txn**：共用 etcd 的天然优势，双写可原子；DNS 解析对一致性敏感，漂移代价高，故有别于领域对象存储中 User 的"暂不启用"取舍，DNS 对象统一启用。
 - **记录类型限 A/AAAA/SRV/TXT**：贴合当前 Record 模型；CNAME/MX/PTR 待模型扩展后再纳入。
