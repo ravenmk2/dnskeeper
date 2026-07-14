@@ -6,6 +6,7 @@ Dnskeeper 是一个 CoreDNS + Etcd 插件的管理工具
 
 ```txt
 docs/
+├── architecture.md            # 架构设计
 ├── api/
 │   ├── overview.md            # API 概览
 │   ├── auth.md                # 认证模块
@@ -29,3 +30,4 @@ docs/
 - 语言保持简洁、精确，逻辑清晰、一致。
 - 使用公共规范的标准术语，禁止自编自造。
 - 使用结构化的方式表达，避免冗长的段落和流水账。
+- 不要机械翻译。
