@@ -1,0 +1,21 @@
+[server]
+listen = ":8080"
+
+[log]
+level = "info"
+
+[etcd]
+endpoints = ["127.0.0.1:2379"]
+username = ""
+password = ""
+# cert = ""
+# key = ""
+# ca = ""
+
+[coredns]
+path = "/skydns"
+
+[jwt]
+secret = "change-me"
+access_ttl = "30m"
+refresh_ttl = "168h"

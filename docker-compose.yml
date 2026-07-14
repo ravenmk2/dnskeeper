@@ -1,0 +1,28 @@
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    command:
+      - etcd
+      - --name=etcd0
+      - --data-dir=/etcd-data
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --initial-cluster=etcd0=http://etcd:2380
+      - --initial-cluster-token=etcd-cluster
+      - --initial-cluster-state=new
+    ports:
+      - "2379:2379"
+    volumes:
+      - etcd-data:/etcd-data
+
+  dnskeeper:
+    build: .
+    depends_on:
+      - etcd
+    volumes:
+      - ./config.docker.toml:/config.toml:ro
+    ports:
+      - "8080:8080"
+
+volumes:
+  etcd-data:

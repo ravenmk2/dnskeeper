@@ -1,0 +1,16 @@
+[server]
+listen = ":8080"
+
+[log]
+level = "info"
+
+[etcd]
+endpoints = ["etcd:2379"]
+
+[coredns]
+path = "/skydns"
+
+[jwt]
+secret = "change-me"
+access_ttl = "30m"
+refresh_ttl = "168h"
