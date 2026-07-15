@@ -46,6 +46,7 @@ func New(cfg *config.Config, logger *logrus.Logger) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create etcd client: %w", err)
 	}
+	logger.Infof("connected to etcd: %v", cfg.Etcd.Endpoints)
 	failed := true
 	defer func() {
 		if failed {

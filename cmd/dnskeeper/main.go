@@ -26,6 +26,8 @@ func main() {
 	}
 
 	logger := log.Setup(cfg.Log.Level, os.Stdout)
+	logger.Info("dnskeeper starting")
+	logger.Infof("config loaded from %s, listen=%s, log_level=%s", *configPath, cfg.Server.Listen, cfg.Log.Level)
 
 	application, err := app.New(cfg, logger)
 	if err != nil {
@@ -42,6 +44,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
+		logger.Infof("dnskeeper started, listening on %s", cfg.Server.Listen)
 		if err := application.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.WithError(err).Fatal("server error")
 		}
