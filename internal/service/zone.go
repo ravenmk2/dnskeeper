@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 
 	"github.com/ravenmk2/dnskeeper/internal/apperr"
 	"github.com/ravenmk2/dnskeeper/internal/store"
@@ -28,28 +27,37 @@ func (s *ZoneService) Create(ctx context.Context, zone string) (*store.Zone, err
 	if !validateZone(zone) {
 		return nil, apperr.Validation
 	}
-	existing, err := s.store.GetZone(ctx, zone)
-	if err != nil && !errors.Is(err, apperr.ZoneNotFound) {
-		return nil, err
+	key := store.ZoneKey(zone)
+	for retry := 0; retry < 3; retry++ {
+		kv, err := s.store.Get(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		if kv != nil {
+			return nil, apperr.ZoneExists
+		}
+		ts := now()
+		z := &store.Zone{
+			Zone:        zone,
+			DomainCount: 0,
+			CreatedAt:   ts,
+			UpdatedAt:   ts,
+		}
+		data, err := store.MarshalZone(z)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := s.store.TxnCAS(ctx, key, 0, []store.Op{
+			store.PutOp{Key: key, Value: data},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return z, nil
+		}
 	}
-	if existing != nil {
-		return nil, apperr.ZoneExists
-	}
-	ts := now()
-	z := &store.Zone{
-		Zone:        zone,
-		DomainCount: 0,
-		CreatedAt:   ts,
-		UpdatedAt:   ts,
-	}
-	data, err := store.MarshalZone(z)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.store.Put(ctx, store.ZoneKey(zone), data); err != nil {
-		return nil, err
-	}
-	return z, nil
+	return nil, apperr.InternalError
 }
 
 func (s *ZoneService) Update(ctx context.Context, zone string) (*store.Zone, error) {

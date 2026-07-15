@@ -16,6 +16,17 @@ type fakeStore struct {
 	modRevs       map[string]int64
 	modCount      int64
 	skydnsPrefix  string
+
+	// Error injection hooks. Set before concurrent goroutines start.
+	// nil/zero = no injection (original behavior).
+	getErr          error
+	getPrefixErr    error
+	putErr          error
+	deleteErr       error
+	deletePrefixErr error
+	txnErr          error
+	txnCASErr       error
+	casFailCount    int // first N TxnCAS calls return (false, nil) to force retry
 }
 
 func newFakeStore() *fakeStore {
@@ -34,6 +45,9 @@ func (s *fakeStore) bumpRev(key string) {
 func (s *fakeStore) Get(_ context.Context, key string) (*store.KV, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	v, ok := s.data[key]
 	if !ok {
 		return nil, nil
@@ -44,6 +58,9 @@ func (s *fakeStore) Get(_ context.Context, key string) (*store.KV, error) {
 func (s *fakeStore) GetPrefix(_ context.Context, prefix string) ([]store.KV, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.getPrefixErr != nil {
+		return nil, s.getPrefixErr
+	}
 	var result []store.KV
 	for k, v := range s.data {
 		if strings.HasPrefix(k, prefix) {
@@ -56,6 +73,9 @@ func (s *fakeStore) GetPrefix(_ context.Context, prefix string) ([]store.KV, err
 func (s *fakeStore) Put(_ context.Context, key string, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.putErr != nil {
+		return s.putErr
+	}
 	cp := make([]byte, len(value))
 	copy(cp, value)
 	s.data[key] = cp
@@ -66,6 +86,9 @@ func (s *fakeStore) Put(_ context.Context, key string, value []byte) error {
 func (s *fakeStore) Delete(_ context.Context, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	delete(s.data, key)
 	delete(s.modRevs, key)
 	return nil
@@ -74,6 +97,9 @@ func (s *fakeStore) Delete(_ context.Context, key string) error {
 func (s *fakeStore) DeletePrefix(_ context.Context, prefix string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.deletePrefixErr != nil {
+		return s.deletePrefixErr
+	}
 	for k := range s.data {
 		if strings.HasPrefix(k, prefix) {
 			delete(s.data, k)
@@ -86,6 +112,9 @@ func (s *fakeStore) DeletePrefix(_ context.Context, prefix string) error {
 func (s *fakeStore) Txn(_ context.Context, ops []store.Op) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.txnErr != nil {
+		return s.txnErr
+	}
 	for _, op := range ops {
 		switch o := op.(type) {
 		case store.PutOp:
@@ -104,6 +133,13 @@ func (s *fakeStore) SkydnsPrefix() string { return s.skydnsPrefix }
 func (s *fakeStore) TxnCAS(_ context.Context, key string, modRevision int64, ops []store.Op) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.txnCASErr != nil {
+		return false, s.txnCASErr
+	}
+	if s.casFailCount > 0 {
+		s.casFailCount--
+		return false, nil
+	}
 	if s.modRevs[key] != modRevision {
 		return false, nil
 	}

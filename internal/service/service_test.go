@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -451,4 +453,210 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// conflictStore wraps a Store and forces the first TxnCAS to observe a
+// competing write (via hook), simulating a concurrent committer that lands
+// between the caller's read and CAS. The CAS mismatch follows naturally from
+// the bumped ModRevision; subsequent TxnCAS calls pass through unchanged.
+type conflictStore struct {
+	store.Store
+	once sync.Once
+	hook func(ctx context.Context, s store.Store)
+}
+
+func (c *conflictStore) TxnCAS(ctx context.Context, key string, modRevision int64, ops []store.Op) (bool, error) {
+	c.once.Do(func() {
+		if c.hook != nil {
+			c.hook(ctx, c.Store)
+		}
+	})
+	return c.Store.TxnCAS(ctx, key, modRevision, ops)
+}
+
+// TestRecordUpdateReMergeOnCASConflict verifies that on a CAS conflict the
+// Update retry re-reads the record and re-merges its change on top of the
+// competing write, so neither change is lost (the core fix for #1).
+func TestRecordUpdateReMergeOnCASConflict(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeStore()
+	seedZone(fs, "example.com")
+	seedDomain(fs, "example.com", "www")
+	seedRecord(fs, "example.com", "www", "0001", "A", "1.2.3.4")
+
+	// Competing writer changes TTL 300 -> 600, leaving Value unchanged.
+	rival := &store.Record{ID: "0001", Type: "A", Value: "1.2.3.4", TTL: 600}
+	rivalData, _ := store.MarshalRecord(rival)
+	rivalKey := store.RecordKey("example.com", "www", "0001")
+
+	conflict := &conflictStore{
+		Store: fs,
+		hook: func(ctx context.Context, s store.Store) {
+			_ = s.Put(ctx, rivalKey, rivalData)
+		},
+	}
+	jwtMgr := jwt.NewManager("test-secret", 30*time.Minute, 168*time.Hour)
+	svc := service.NewServices(conflict, jwtMgr)
+
+	newVal := "5.6.7.8"
+	result, err := svc.Record.Update(ctx, "example.com", "www", "0001", &newVal, nil, nil, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "5.6.7.8", result.Value, "update value must be applied")
+	assert.Equal(t, 600, result.TTL, "concurrent TTL change must not be overwritten")
+
+	got, _ := fs.GetRecord(ctx, "example.com", "www", "0001")
+	assert.Equal(t, "5.6.7.8", got.Value)
+	assert.Equal(t, 600, got.TTL)
+}
+
+// TestRecordUpdateConcurrentNoLostUpdate runs two concurrent Updates on the
+// same record targeting different fields. After both complete, both changes
+// must be present (no silent lost update). Run with -race.
+func TestRecordUpdateConcurrentNoLostUpdate(t *testing.T) {
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		svc, fs := newTestServices()
+		seedZone(fs, "example.com")
+		seedDomain(fs, "example.com", "www")
+		seedRecord(fs, "example.com", "www", "0001", "A", "1.2.3.4")
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		barrier := make(chan struct{})
+		var err1, err2 error
+		go func() {
+			defer wg.Done()
+			<-barrier
+			v := "5.6.7.8"
+			_, err1 = svc.Record.Update(ctx, "example.com", "www", "0001", &v, nil, nil, nil, nil)
+		}()
+		go func() {
+			defer wg.Done()
+			<-barrier
+			ttl := 600
+			_, err2 = svc.Record.Update(ctx, "example.com", "www", "0001", nil, &ttl, nil, nil, nil)
+		}()
+		close(barrier)
+		wg.Wait()
+
+		require.NoError(t, err1, "iter %d", i)
+		require.NoError(t, err2, "iter %d", i)
+
+		got, err := fs.GetRecord(ctx, "example.com", "www", "0001")
+		require.NoError(t, err, "iter %d", i)
+		assert.Equal(t, "5.6.7.8", got.Value, "iter %d: value lost (concurrent update)", i)
+		assert.Equal(t, 600, got.TTL, "iter %d: ttl lost (concurrent update)", i)
+	}
+}
+
+func TestRecordUpdateCASRetry(t *testing.T) {
+	svc, fs := newTestServices()
+	seedZone(fs, "example.com")
+	seedDomain(fs, "example.com", "www")
+	seedRecord(fs, "example.com", "www", "0001", "A", "1.2.3.4")
+	fs.casFailCount = 2 // first two CAS attempts conflict; 3rd succeeds
+
+	newVal := "5.6.7.8"
+	result, err := svc.Record.Update(context.Background(), "example.com", "www", "0001", &newVal, nil, nil, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "5.6.7.8", result.Value)
+}
+
+func TestRecordUpdateCASRetryExhausted(t *testing.T) {
+	svc, fs := newTestServices()
+	seedZone(fs, "example.com")
+	seedDomain(fs, "example.com", "www")
+	seedRecord(fs, "example.com", "www", "0001", "A", "1.2.3.4")
+	fs.casFailCount = 3 // all retries conflict
+
+	newVal := "5.6.7.8"
+	_, err := svc.Record.Update(context.Background(), "example.com", "www", "0001", &newVal, nil, nil, nil, nil)
+	assert.ErrorIs(t, err, apperr.InternalError)
+}
+
+func TestRecordUpdateStoreGetError(t *testing.T) {
+	svc, fs := newTestServices()
+	seedZone(fs, "example.com")
+	seedDomain(fs, "example.com", "www")
+	seedRecord(fs, "example.com", "www", "0001", "A", "1.2.3.4")
+	fs.getErr = errors.New("store down")
+
+	newVal := "5.6.7.8"
+	_, err := svc.Record.Update(context.Background(), "example.com", "www", "0001", &newVal, nil, nil, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store down")
+}
+
+func TestRecordUpdateTxnCASError(t *testing.T) {
+	svc, fs := newTestServices()
+	seedZone(fs, "example.com")
+	seedDomain(fs, "example.com", "www")
+	seedRecord(fs, "example.com", "www", "0001", "A", "1.2.3.4")
+	fs.txnCASErr = errors.New("etcd txn failed")
+
+	newVal := "5.6.7.8"
+	_, err := svc.Record.Update(context.Background(), "example.com", "www", "0001", &newVal, nil, nil, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "etcd txn failed")
+}
+
+// TestZoneCreateConcurrent runs two concurrent Creates of the same zone.
+// Exactly one must succeed; the other must get ZoneExists. Run with -race.
+func TestZoneCreateConcurrent(t *testing.T) {
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		svc, _ := newTestServices()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		barrier := make(chan struct{})
+		var err1, err2 error
+		go func() {
+			defer wg.Done()
+			<-barrier
+			_, err1 = svc.Zone.Create(ctx, "example.com")
+		}()
+		go func() {
+			defer wg.Done()
+			<-barrier
+			_, err2 = svc.Zone.Create(ctx, "example.com")
+		}()
+		close(barrier)
+		wg.Wait()
+
+		ok1 := err1 == nil
+		ok2 := err2 == nil
+		assert.True(t, ok1 != ok2, "iter %d: expected exactly one success, got err1=%v err2=%v", i, err1, err2)
+		if !ok1 {
+			assert.ErrorIs(t, err1, apperr.ZoneExists, "iter %d", i)
+		}
+		if !ok2 {
+			assert.ErrorIs(t, err2, apperr.ZoneExists, "iter %d", i)
+		}
+	}
+}
+
+func TestZoneCreateCASRetry(t *testing.T) {
+	svc, fs := newTestServices()
+	fs.casFailCount = 2 // first two CAS attempts conflict; 3rd succeeds
+
+	z, err := svc.Zone.Create(context.Background(), "example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "example.com", z.Zone)
+}
+
+func TestZoneCreateCASRetryExhausted(t *testing.T) {
+	svc, fs := newTestServices()
+	fs.casFailCount = 3 // all retries conflict
+
+	_, err := svc.Zone.Create(context.Background(), "example.com")
+	assert.ErrorIs(t, err, apperr.InternalError)
+}
+
+func TestZoneCreateStoreGetError(t *testing.T) {
+	svc, fs := newTestServices()
+	fs.getErr = errors.New("store down")
+
+	_, err := svc.Zone.Create(context.Background(), "example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store down")
 }

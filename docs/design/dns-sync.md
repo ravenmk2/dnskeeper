@@ -76,9 +76,13 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
 - 期望子键集：该 Domain 下每个 Record 对应前缀下一个子键（子键名 = record-id）；
 - 期望值：按 2.2 由 `Record.type` 与字段构成 SkyDNS message。
 
-### 3.2 reconcile 算法
+### 3.2 收敛模式
 
-对该 Domain 的记录前缀执行收敛，步骤幂等、可重入：
+同步按触发方分两种收敛模式，均以"期望记录集 → 实际收敛"为目标，但适用场景与承载者不同。
+
+**随路写入（CRUD 内联）**：单条 Record 增删改时，CRUD 接口在同一 `Txn` 内直接写入/删除对应 skydns 子键，不列出前缀——创建 `Put` 子键 = 期望 message；更新 `Put` 子键（覆盖为新 message）；删除 `Delete` 子键。这是 CRUD 接口的固有职责：写 dnskeeper Record 与写对应 CoreDNS 子键同 `Txn` 原子完成，正常流程下无残留，结果与 reconcile 的对应分支等价（无额外差异需写入时二者行为一致）。
+
+**显式 reconcile（独立同步接口）**：对该 Domain 的记录前缀执行 list + diff 收敛，步骤幂等、可重入：
 
 1. 列出该前缀下全部子键（前缀范围查询，返回 key 与 value），得**实际记录集** `{record-id → message}`；
 2. 与**期望记录集**求 diff：
@@ -87,7 +91,9 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
     - 保留但 message 不一致（任一字段变化）：`Put` 子键（覆盖以更新）；
     - 保留且 message 一致：跳过。
 
-该算法满足"系统自动比较新旧记录集，新增/删除差异记录"的可观察行为：仅对差异与字段变化做最小写入。
+此模式用于异常态自愈（手工误改 skydns 子键、历史部分失败残留等）与集合级对账，不归属 CRUD 接口，由独立同步接口承载（见 §3.6、§3.7）。
+
+> 随路写入保证正常态一致；显式 reconcile 处理异常态收敛，职责分离。二者均满足"系统自动比较新旧记录集，新增/删除差异记录"的可观察行为。
 
 ### 3.3 期望记录集为空
 
@@ -119,9 +125,11 @@ DNS 名的各级标签逆序拼接，前置 `/skydns`，得到 CoreDNS 查找路
 
 ### 3.6 悬空记录清理
 
+> 本节属独立同步接口职责，CRUD 随路写入不承担此项。
+
 CoreDNS 记录须由 Record 对象支撑。无对应 Record 的记录为**悬空**，应删除。
 
-集合级同步在逐个 Domain 执行 3.2 后，再做一次 Zone 级对账：
+集合级同步在逐个 Domain 执行显式 reconcile 后，再做一次 Zone 级对账：
 
 1. 列出 `/skydns/{reversed-zone}/` 下全部子键（含值，一次范围查询）；
 2. 对每个子键，剥离 `/skydns/{reversed-zone}/` 前缀，按 `/` 切分得相对路径段序列：
@@ -129,14 +137,14 @@ CoreDNS 记录须由 Record 对象支撑。无对应 Record 的记录为**悬空
     - 其余段为 domain 的逆序标签，将其**逆序**后以 `.` 连接得 domain（空序列 → `@`）；
 3. 据此还原 `(zone, domain, record-id)`，若 `/dnskeeper/dns/{zone}/{domain}/{record-id}` 不存在，则该子键为悬空，删除。
 
-> 多级 domain（含 `.`）在 CoreDNS 路径中被拆为多段逆序；还原时逆序再拼回，与正向映射互逆。同一 Domain 下多出的非法字段（Record 存在但 message 与期望不符）由 3.2 reconcile 覆盖，不属悬空。record-id 不复用，故已删除的 id 永不会被重新分配给不同内容，悬空识别无歧义。
+> 多级 domain（含 `.`）在 CoreDNS 路径中被拆为多段逆序；还原时逆序再拼回，与正向映射互逆。同一 Domain 下多出的非法字段（Record 存在但 message 与期望不符）由显式 reconcile 覆盖，不属悬空。record-id 不复用，故已删除的 id 永不会被重新分配给不同内容，悬空识别无歧义。
 
 ### 3.7 应用粒度
 
-上述规则以 Domain 为单元，可应用于任意 Domain 集合，规则本身不变：
+收敛模式按触发方选用：
 
-- **单 Domain 级**：对单个 Domain 执行 3.2（或 3.3）。
-- **集合级**：对集合内每个 Domain 逐个套用 3.2–3.3，之后执行 3.6 悬空清理，以保证 CoreDNS 侧与期望状态全局一致。
+- **单 Domain CRUD**：随路写入（§3.2），在请求路径内完成。
+- **集合级 / 异常态对账**：由独立同步接口逐 Domain 执行显式 reconcile 与 §3.3，再执行 §3.6 悬空清理，保证 CoreDNS 侧与期望状态全局一致。
 
 集合可为某 Zone 下全部 Domain，或全部 Domain；差异仅为遍历范围与是否执行悬空清理。
 
@@ -169,7 +177,7 @@ dnskeeper 与 CoreDNS 共用同一 etcd，单次 `Txn` 可原子写 `/dnskeeper/
 
 - **子键命名取 record-id**：与 Record 一一对应，reconcile 按子键名比 diff；接受 dotless id 的幻影子域副作用（2.3）。
 - **record-id 不复用**：Domain 内递增序号、删除不回退，id 稳定永不重复——悬空记录识别无歧义，同步语义清晰（见 [data-storage.md](data-storage.md) §2）。
-- **同步以 reconcile 建模而非按操作建模**：规则描述"期望 → 收敛"的状态转移，与触发时机解耦，单 Domain 与集合级同一套规则，仅遍历范围与悬空清理与否不同。
+- **CRUD 随路写入与显式 reconcile 职责分离**：CRUD 接口内联写对应 skydns 子键，保证正常态一致（`Txn` 原子、无残留）；异常态自愈（悬空子键、手工误改）与集合级对账由独立同步接口以 list+diff reconcile 承载。不令 CRUD 承担前缀扫描与 diff，避免在请求路径引入额外 etcd 读与并发原子性复杂度。
 - **多类型记录共用 reconcile 框架**：A/AAAA/SRV/TXT 仅 message 构造按类型不同，diff 与收敛逻辑统一。
 - **集合级引入悬空清理**：单 Domain 的 reconcile 只能保证被同步 Domain 自身正确，无法清除无主记录；悬空清理以 Zone 反转前缀为单位对账，使 CoreDNS 侧全局收敛。
 - **原子性启用 Txn**：共用 etcd 的天然优势，双写可原子；DNS 解析对一致性敏感，漂移代价高，故有别于领域对象存储中 User 的"暂不启用"取舍，DNS 对象统一启用。

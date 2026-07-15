@@ -136,18 +136,21 @@ func (s *RecordService) Update(ctx context.Context, zone, domain, id string, val
 	if _, err := s.store.GetZone(ctx, zone); err != nil {
 		return nil, err
 	}
+	if _, err := s.store.GetDomain(ctx, zone, domain); err != nil {
+		return nil, err
+	}
 	prefix := s.store.SkydnsPrefix()
-	domainKey := store.DomainKey(zone, domain)
+	recordKey := store.RecordKey(zone, domain, id)
 	for retry := 0; retry < 3; retry++ {
-		kv, err := s.store.Get(ctx, domainKey)
+		kv, err := s.store.Get(ctx, recordKey)
 		if err != nil {
 			return nil, err
 		}
 		if kv == nil {
-			return nil, apperr.DomainNotFound
+			return nil, apperr.RecordNotFound
 		}
-		existing, err := s.store.GetRecord(ctx, zone, domain, id)
-		if err != nil {
+		var existing store.Record
+		if err := json.Unmarshal(kv.Value, &existing); err != nil {
 			return nil, err
 		}
 		if priority != nil || port != nil || weight != nil {
@@ -155,7 +158,7 @@ func (s *RecordService) Update(ctx context.Context, zone, domain, id string, val
 				return nil, apperr.Validation
 			}
 		}
-		merged := *existing
+		merged := existing
 		if value != nil {
 			if !validateRecordValue(existing.Type, *value) {
 				return nil, apperr.Validation
@@ -202,10 +205,10 @@ func (s *RecordService) Update(ctx context.Context, zone, domain, id string, val
 			return nil, err
 		}
 		ops := []store.Op{
-			store.PutOp{Key: store.RecordKey(zone, domain, id), Value: recordData},
+			store.PutOp{Key: recordKey, Value: recordData},
 			store.PutOp{Key: store.SkydnsRecordKey(prefix, zone, domain, id), Value: skydnsData},
 		}
-		ok, err := s.store.TxnCAS(ctx, domainKey, kv.ModRevision, ops)
+		ok, err := s.store.TxnCAS(ctx, recordKey, kv.ModRevision, ops)
 		if err != nil {
 			return nil, err
 		}
