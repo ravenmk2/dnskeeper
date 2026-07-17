@@ -1,6 +1,8 @@
 # AI Tools
+.agents/
 .claude/
 .opencode/
+.playwright-cli/
 
 # Binaries
 *.exe

@@ -6,8 +6,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -20,6 +22,7 @@ import (
 	"github.com/ravenmk2/dnskeeper/internal/jwt"
 	"github.com/ravenmk2/dnskeeper/internal/service"
 	"github.com/ravenmk2/dnskeeper/internal/store"
+	"github.com/ravenmk2/dnskeeper/web"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -120,6 +123,41 @@ func registerRoutes(e *echo.Echo, h *handler.Handlers, jwtMgr *jwt.Manager) {
 	adm.POST("/dns/domain/create", h.CreateDomain)
 	adm.POST("/dns/domain/update", h.UpdateDomain)
 	adm.POST("/dns/domain/delete", h.DeleteDomain)
+
+	registerStatic(e)
+}
+
+// registerStatic 同源提供嵌入的前端 SPA:GET 非 /api 路径优先返回静态文件,
+// 根路径与未命中则回退 index.html(history 模式)。直接读取字节输出,避免
+// http.FileServer 对 /index.html 的 301 行为导致重定向死循环。
+func registerStatic(e *echo.Echo) {
+	distFS, err := fs.Sub(web.Assets, "dist")
+	if err != nil {
+		return
+	}
+	fsrv := http.FileServer(http.FS(distFS))
+	serveIndex := func(c echo.Context) error {
+		data, rerr := fs.ReadFile(distFS, "index.html")
+		if rerr != nil {
+			return c.String(http.StatusNotFound, "前端未构建:请在 web/ 执行 npm run build")
+		}
+		c.Response().Header().Set("Cache-Control", "no-cache")
+		return c.Blob(http.StatusOK, "text/html; charset=utf-8", data)
+	}
+	handler := func(c echo.Context) error {
+		name := strings.TrimPrefix(c.Request().URL.Path, "/")
+		// 存在的非目录文件(且非 index.html)由 FileServer 直接服务;
+		// 根路径、index.html、未命中路径 → 回退 SPA index.html
+		if name != "" && name != "index.html" {
+			if info, serr := fs.Stat(distFS, name); serr == nil && !info.IsDir() {
+				fsrv.ServeHTTP(c.Response(), c.Request())
+				return nil
+			}
+		}
+		return serveIndex(c)
+	}
+	// GET 导航;HEAD 供链接预览/探活
+	e.Match([]string{http.MethodGet, http.MethodHead}, "/*", handler)
 }
 
 func errorHandler(err error, c echo.Context) {
